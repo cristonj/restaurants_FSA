@@ -26,7 +26,6 @@ def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: 
     recent_restaurants_temp_table_full_id = f"{project_id}.{dataset_id}.recent_restaurants_temp"
 
     model_params_json_lit = "JSON '''{ \"tools\": [{\"googleSearch\": {}}], \"generationConfig\": { \"temperature\": 0.2, \"maxOutputTokens\": 8192, \"topP\": 1, \"seed\": 0 } }'''"
-
     # This SQL query assumes that the table referenced by `recent_restaurants_temp_table_full_id`
     # (i.e., `recent_restaurants_temp`) already has a column named `gemini_insights`.
     # If `gemini_insights` does not exist in `recent_restaurants_temp`, this query will fail.
@@ -83,7 +82,7 @@ def call_gemini_with_fhrs_data(project_id: str, dataset_id: str, gemini_prompt: 
 
 
         # Now, fetch the results from the newly created table
-        sql_query_select_results = f"SELECT fhrsid, businessname, addressline1, addressline2, addressline3, postcode, gemini_insights FROM `{genairesults_temp_table_full_id}` WHERE gemini_insights IS NOT NULL AND gemini_insights != ''"
+        sql_query_select_results = f"SELECT fhrsid, businessname, addressline1, addressline2, addressline3, postcode, gemini_insights FROM `{genairesults_temp_table_full_id}` "
         st.info(f"Fetching generated insights from {genairesults_temp_table_full_id}...")
         print(f"Executing SQL to fetch results: {sql_query_select_results}")
 
