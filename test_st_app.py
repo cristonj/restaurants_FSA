@@ -287,7 +287,7 @@ class TestHandleMergeUpdateAction(unittest.TestCase):
           UPDATE SET T.{field_update} = S.{field_update}
         """
         mock_st.info.assert_any_call(f"Initiating MERGE operation to update '{field_update}' in '{master_path}' using '{update_path}' on matching '{match_id}'.")
-        mock_execute_merge_query.assert_called_once_with(expected_query.strip(), 'proj')
+        mock_execute_merge_query.assert_called_once_with(expected_query, project_id='proj')
         mock_load_all_data.assert_called_once_with(project_id='proj', dataset_id='dataset', table_id='master_table')
         mock_display_data.assert_called_once_with(sample_data)
         mock_st.success.assert_any_call("MERGE operation completed successfully.")
