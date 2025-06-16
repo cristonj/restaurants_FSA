@@ -513,6 +513,92 @@ def handle_update_fields_action(master_table_path_str: str, uploaded_csv_file: A
     if success_count == 0 and error_count == 0 and not df.empty:
         st.info("No rows were processed for update. This might happen if all rows had no data after removing fhrsid.")
 
+def handle_merge_update_action(master_table_path: str, update_table_path: str, matching_id: str, field_to_update: str):
+    """
+    Constructs and executes a MERGE SQL query to update a field in the master table
+    from an update table. After successful execution, it fetches and displays the master table.
+    """
+    st.info(f"Initiating MERGE operation to update '{field_to_update}' in '{master_table_path}' using '{update_table_path}' on matching '{matching_id}'.")
+
+    try:
+        master_parts = master_table_path.split('.')
+        update_parts = update_table_path.split('.')
+        if len(master_parts) != 3 or not all(master_parts):
+            st.error(f"Invalid BigQuery Master Table Path: '{master_table_path}'. Expected 'project.dataset.table'.")
+            return
+        if len(update_parts) != 3 or not all(update_parts):
+            st.error(f"Invalid BigQuery Update Table Path: '{update_table_path}'. Expected 'project.dataset.table'.")
+            return
+
+        master_project_id, master_dataset_id, master_table_id = master_parts
+        # Assuming update table is in the same project, which is common for MERGE.
+        # If not, the query needs to qualify the update table path fully.
+        # For now, we'll assume the paths provided are fully qualified if cross-project.
+
+        # Sanitize column names for safety, though BQ is generally okay with original names in queries if not keywords.
+        # However, matching_id and field_to_update are used directly in SQL.
+        # It's crucial these don't contain SQL injection if they were from less trusted sources.
+        # For this app, they come from text inputs, so less risk, but good to be aware.
+        # No actual sanitization applied here to keep it simple, assuming valid column names.
+
+        merge_query = f"""
+        MERGE `{master_table_path}` T
+        USING `{update_table_path}` S
+        ON T.{matching_id} = S.{matching_id}
+        WHEN MATCHED THEN
+          UPDATE SET T.{field_to_update} = S.{field_to_update}
+        """
+
+        st.info("Constructed MERGE query. Executing...")
+        st.code(merge_query, language="sql")
+
+        # Placeholder for the actual BQ execution function
+        # This function needs to be created in bq_utils.py
+        # It should take the query and project_id (for client initialization)
+        # from bq_utils import execute_merge_query # This import would be at the top of the file
+
+        # For now, let's assume bq_utils.execute_merge_query exists and works
+        # We'll need to import it at the top of st_app.py
+        # from bq_utils import execute_merge_query (ensure this import is added)
+
+        # The project_id for execute_merge_query should ideally be the one where the query runs,
+        # which is typically the project of the master table.
+        # query_project_id = master_project_id
+
+        # Simulate execution for now
+        # success = bq_utils.execute_merge_query(merge_query, project_id=query_project_id)
+
+        # --- SIMULATED EXECUTION ---
+        st.warning("Simulating MERGE query execution. `bq_utils.execute_merge_query` needs to be implemented.")
+        # To make this runnable without the actual bq_utils.execute_merge_query:
+        # The project_id for execute_merge_query should ideally be the one where the query runs,
+        # which is typically the project of the master table.
+        query_project_id = master_project_id
+
+        success = execute_merge_query(merge_query, project_id=query_project_id)
+
+        if success:
+            st.success("MERGE operation completed successfully.")
+            st.info(f"Loading and displaying updated master table: {master_table_path}")
+
+            updated_master_data = load_all_data_from_bq(
+                project_id=master_project_id,
+                dataset_id=master_dataset_id,
+                table_id=master_table_id
+            )
+            if updated_master_data:
+                display_data(updated_master_data)
+            else:
+                st.warning(f"Could not load data from {master_table_path} after update, or table is empty.")
+        else:
+            st.error("MERGE operation failed. Check logs for details.")
+
+    except ValueError as ve: # Catches split issues if paths are malformed
+        st.error(f"Error parsing BigQuery table paths: {ve}")
+    except ImportError:
+        st.error("A required BigQuery utility function (e.g., execute_merge_query or load_all_data_from_bq) is not available. Please ensure bq_utils.py is correct and all imports are set up.")
+    except Exception as e:
+        st.error(f"An unexpected error occurred during the MERGE operation: {e}")
 
 def main_ui():
     st.title("Food Standards Agency API Explorer")
@@ -742,89 +828,3 @@ def main_ui():
 
 if __name__ == "__main__":
     main_ui()
-def handle_merge_update_action(master_table_path: str, update_table_path: str, matching_id: str, field_to_update: str):
-    """
-    Constructs and executes a MERGE SQL query to update a field in the master table
-    from an update table. After successful execution, it fetches and displays the master table.
-    """
-    st.info(f"Initiating MERGE operation to update '{field_to_update}' in '{master_table_path}' using '{update_table_path}' on matching '{matching_id}'.")
-
-    try:
-        master_parts = master_table_path.split('.')
-        update_parts = update_table_path.split('.')
-        if len(master_parts) != 3 or not all(master_parts):
-            st.error(f"Invalid BigQuery Master Table Path: '{master_table_path}'. Expected 'project.dataset.table'.")
-            return
-        if len(update_parts) != 3 or not all(update_parts):
-            st.error(f"Invalid BigQuery Update Table Path: '{update_table_path}'. Expected 'project.dataset.table'.")
-            return
-
-        master_project_id, master_dataset_id, master_table_id = master_parts
-        # Assuming update table is in the same project, which is common for MERGE.
-        # If not, the query needs to qualify the update table path fully.
-        # For now, we'll assume the paths provided are fully qualified if cross-project.
-
-        # Sanitize column names for safety, though BQ is generally okay with original names in queries if not keywords.
-        # However, matching_id and field_to_update are used directly in SQL.
-        # It's crucial these don't contain SQL injection if they were from less trusted sources.
-        # For this app, they come from text inputs, so less risk, but good to be aware.
-        # No actual sanitization applied here to keep it simple, assuming valid column names.
-
-        merge_query = f"""
-        MERGE `{master_table_path}` T
-        USING `{update_table_path}` S
-        ON T.{matching_id} = S.{matching_id}
-        WHEN MATCHED THEN
-          UPDATE SET T.{field_to_update} = S.{field_to_update}
-        """
-
-        st.info("Constructed MERGE query. Executing...")
-        st.code(merge_query, language="sql")
-
-        # Placeholder for the actual BQ execution function
-        # This function needs to be created in bq_utils.py
-        # It should take the query and project_id (for client initialization)
-        # from bq_utils import execute_merge_query # This import would be at the top of the file
-
-        # For now, let's assume bq_utils.execute_merge_query exists and works
-        # We'll need to import it at the top of st_app.py
-        # from bq_utils import execute_merge_query (ensure this import is added)
-
-        # The project_id for execute_merge_query should ideally be the one where the query runs,
-        # which is typically the project of the master table.
-        # query_project_id = master_project_id
-
-        # Simulate execution for now
-        # success = bq_utils.execute_merge_query(merge_query, project_id=query_project_id)
-
-        # --- SIMULATED EXECUTION ---
-        st.warning("Simulating MERGE query execution. `bq_utils.execute_merge_query` needs to be implemented.")
-        # To make this runnable without the actual bq_utils.execute_merge_query:
-        # The project_id for execute_merge_query should ideally be the one where the query runs,
-        # which is typically the project of the master table.
-        query_project_id = master_project_id
-
-        success = execute_merge_query(merge_query, project_id=query_project_id)
-
-        if success:
-            st.success("MERGE operation completed successfully.")
-            st.info(f"Loading and displaying updated master table: {master_table_path}")
-
-            updated_master_data = load_all_data_from_bq(
-                project_id=master_project_id,
-                dataset_id=master_dataset_id,
-                table_id=master_table_id
-            )
-            if updated_master_data:
-                display_data(updated_master_data)
-            else:
-                st.warning(f"Could not load data from {master_table_path} after update, or table is empty.")
-        else:
-            st.error("MERGE operation failed. Check logs for details.")
-
-    except ValueError as ve: # Catches split issues if paths are malformed
-        st.error(f"Error parsing BigQuery table paths: {ve}")
-    except ImportError:
-        st.error("A required BigQuery utility function (e.g., execute_merge_query or load_all_data_from_bq) is not available. Please ensure bq_utils.py is correct and all imports are set up.")
-    except Exception as e:
-        st.error(f"An unexpected error occurred during the MERGE operation: {e}")
