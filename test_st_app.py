@@ -263,8 +263,8 @@ class TestRecentRestaurantAnalysisGeminiUpdate(unittest.TestCase):
 
 class TestHandleMergeUpdateAction(unittest.TestCase):
     @patch('st_app.display_data')
-    @patch('st_app.bq_utils.load_all_data_from_bq')
-    @patch('st_app.bq_utils.execute_merge_query')
+    @patch('st_app.load_all_data_from_bq')
+    @patch('st_app.execute_merge_query')
     @patch('st_app.st') # Mock streamlit module
     def test_handle_merge_update_action_success(self, mock_st, mock_execute_merge_query, mock_load_all_data, mock_display_data):
         mock_execute_merge_query.return_value = True
@@ -293,8 +293,8 @@ class TestHandleMergeUpdateAction(unittest.TestCase):
         mock_st.success.assert_any_call("MERGE operation completed successfully.")
 
     @patch('st_app.display_data')
-    @patch('st_app.bq_utils.load_all_data_from_bq')
-    @patch('st_app.bq_utils.execute_merge_query')
+    @patch('st_app.load_all_data_from_bq')
+    @patch('st_app.execute_merge_query')
     @patch('st_app.st')
     def test_handle_merge_update_action_merge_fails(self, mock_st, mock_execute_merge_query, mock_load_all_data, mock_display_data):
         mock_execute_merge_query.return_value = False
@@ -311,7 +311,7 @@ class TestHandleMergeUpdateAction(unittest.TestCase):
         mock_load_all_data.assert_not_called()
         mock_display_data.assert_not_called()
 
-    @patch('st_app.bq_utils.execute_merge_query')
+    @patch('st_app.execute_merge_query')
     @patch('st_app.st')
     def test_handle_merge_update_action_invalid_paths(self, mock_st, mock_execute_merge_query):
         from st_app import handle_merge_update_action
