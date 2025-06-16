@@ -109,8 +109,8 @@ class TestRecentRestaurantAnalysisGeminiUpdate(unittest.TestCase):
         main_ui()
 
         self.mock_call_gemini.assert_called_once_with(project_id="test_project", dataset_id="test_dataset", gemini_prompt=ANY)
-        self.assertEqual(self.mock_update_bq.call_count, 2)
-        mock_st_global.success.assert_any_call("Successfully updated 2 rows with Gemini insights.")
+        self.mock_update_bq.assert_not_called()
+        # The success message related to BQ update is removed as the update logic is gone.
 
     def test_missing_fhrsid_column_in_insights_df(self, mock_st_global):
         self._setup_initial_session_state(mock_st_global)
@@ -134,8 +134,7 @@ class TestRecentRestaurantAnalysisGeminiUpdate(unittest.TestCase):
         main_ui()
 
         self.mock_call_gemini.assert_called_once() # Gemini should be called
-        mock_st_global.error.assert_any_call("FHRSID column is missing in Gemini insights. Cannot update main table.")
-        mock_st_global.stop.assert_called_once()
+        # The error message and stop call related to missing 'fhrsid' for the update block are removed.
         self.mock_update_bq.assert_not_called()
 
 
@@ -214,8 +213,7 @@ class TestRecentRestaurantAnalysisGeminiUpdate(unittest.TestCase):
         main_ui() # Gemini run
 
         self.mock_call_gemini.assert_called_once()
-        mock_st_global.error.assert_any_call("gemini_insights column is missing. Cannot update main table.")
-        mock_st_global.stop.assert_called_once()
+        # The error message and stop call related to missing 'gemini_insights' for the update block are removed.
         self.mock_update_bq.assert_not_called()
 
 
@@ -233,10 +231,9 @@ class TestRecentRestaurantAnalysisGeminiUpdate(unittest.TestCase):
         self.mock_call_gemini.assert_called_once()
         # Corrected expected error message string representation
         actual_exception_message = "not enough values to unpack (expected 3, got 2)"
-        expected_error_message = f"Invalid BigQuery table path for the main table: '{invalid_path}'. Error: {actual_exception_message}"
-
-        mock_st_global.error.assert_any_call(expected_error_message)
-        mock_st_global.stop.assert_called_once()
+        # The specific error message check for the main table update path is removed.
+        # The st.stop() call associated with that error is also removed.
+        # The test now primarily ensures that Gemini was called and BQ update was not.
         self.mock_update_bq.assert_not_called()
 
 
@@ -255,10 +252,8 @@ class TestRecentRestaurantAnalysisGeminiUpdate(unittest.TestCase):
         main_ui() # Gemini run
 
         self.mock_call_gemini.assert_called_once()
-        self.assertEqual(self.mock_update_bq.call_count, 2)
-        mock_st_global.warning.assert_any_call("Failed to update insights for FHRSID 789. Check logs.")
-        mock_st_global.warning.assert_any_call("Failed to update insights for FHRSID 890. Check logs.")
-        mock_st_global.error.assert_any_call("Update summary: Successfully updated 0 rows. Failed to update 2 rows.")
+        self.mock_update_bq.assert_not_called()
+        # Warning and error messages related to BQ update failures are removed.
 
 
 class TestHandleMergeUpdateAction(unittest.TestCase):

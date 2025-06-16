@@ -739,55 +739,9 @@ def main_ui():
                             st.info("Returning the table with Gemini insights for user front end")
                             st.dataframe(insights_df)
 
-                            # Prepare insights_df for update
-                            # The faulty try-except block referencing main_table_path has been removed.
-                            if 'fhrsid' not in insights_df.columns:
-                                st.error("FHRSID column is missing in Gemini insights. Cannot update main table.")
-                                st.stop()
-                            elif 'gemini_insights' not in insights_df.columns: # Changed to elif
-                                st.error("gemini_insights column is missing. Cannot update main table.")
-                                st.stop()
-                            else:
-                                # Use bq_source_table_input as requested
-                                try:
-                                    # bq_source_table_input is defined above in the same function scope
-                                    main_project_id, main_dataset_id, main_table_id = bq_source_table_input.split('.')
-                                    if not all([main_project_id, main_dataset_id, main_table_id]):
-                                        raise ValueError("Each part of the BigQuery table path must be non-empty.")
-                                except ValueError as e:
-                                    st.error(f"Invalid BigQuery table path for the main table: '{bq_source_table_input}'. Error: {e}")
-                                    st.stop()
+                            # The BigQuery update block has been removed as per the requirement.
+                            # The insights_df is displayed above, and no further BQ update happens here.
 
-                                st.info(f"Attempting to update table {main_project_id}.{main_dataset_id}.{main_table_id} with Gemini insights...")
-                                success_count = 0
-                                error_count = 0
-
-                                for index, row in insights_df.iterrows():
-                                    fhrsid = str(row['fhrsid']) # Ensure fhrsid is a string
-                                    insight_text = row['gemini_insights']
-
-                                    update_payload = {'gemini_insights': insight_text}
-
-                                    # Call bq_utils.update_rows_in_bigquery
-                                    # Assuming bq_utils is imported at the top of the file
-                                    updated_successfully = update_rows_in_bigquery(
-                                        project_id=main_project_id,
-                                        dataset_id=main_dataset_id,
-                                        table_id=main_table_id,
-                                        fhrsid=fhrsid,
-                                        update_data=update_payload
-                                    )
-
-                                    if updated_successfully:
-                                        success_count += 1
-                                    else:
-                                        error_count += 1
-                                        st.warning(f"Failed to update insights for FHRSID {fhrsid}. Check logs.")
-
-                                if error_count > 0:
-                                    st.error(f"Update summary: Successfully updated {success_count} rows. Failed to update {error_count} rows.")
-                                else:
-                                    st.success(f"Successfully updated {success_count} rows with Gemini insights.")
                         else:
                             st.warning("No insights were generated or returned, so the main table was not updated.")
 
