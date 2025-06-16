@@ -8,12 +8,16 @@ ORIGINAL_COLUMNS_TO_KEEP = [
     'first_seen', 'manual_review', 'gemini_insights'
 ]
 
-from google.cloud import bigquery
+from google.cloud import bigquery, exceptions as google_cloud_exceptions # Added google_cloud_exceptions
 from google.cloud.bigquery.client import Client # Explicit import for type hinting if needed elsewhere
 from typing import List, Dict, Any # Removed Optional, Added Dict, Any
 import re
 import pandas_gbq # Added import
 from google.auth.exceptions import DefaultCredentialsError # Added import
+import logging # Added import
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Custom Exceptions
 class BigQueryExecutionError(Exception):
@@ -376,4 +380,45 @@ def update_rows_in_bigquery(project_id: str, dataset_id: str, table_id: str, fhr
     except Exception as e:
         print(f"An error occurred during BigQuery UPDATE: {e}")
         # st.error(f"An error occurred during BigQuery UPDATE: {e}")
+        return False
+
+def execute_merge_query(merge_query: str, project_id: str) -> bool:
+    """
+    Executes a MERGE SQL query in BigQuery.
+
+    Args:
+        merge_query: The MERGE SQL query string.
+        project_id: The Google Cloud project ID where the query will be run.
+
+    Returns:
+        True if the query executes successfully, False otherwise.
+    """
+    logging.info(f"Attempting to execute MERGE query in project '{project_id}':\n{merge_query}")
+    try:
+        client = bigquery.Client(project=project_id)
+        query_job = client.query(merge_query)
+        query_job.result()  # Wait for the job to complete
+
+        if query_job.errors:
+            logging.error(f"MERGE query failed with errors: {query_job.errors}")
+            # Optionally, include errors in Streamlit if this function is called directly from UI context
+            # st.error(f"BigQuery MERGE query failed: {query_job.errors}")
+            return False
+
+        logging.info("MERGE query executed successfully.")
+        # num_affected_rows might be available depending on the query and BQ API version
+        # For example: if query_job.num_dml_affected_rows is not None:
+        # logging.info(f"Number of rows affected by MERGE query: {query_job.num_dml_affected_rows}")
+        return True
+    except DefaultCredentialsError as e:
+        logging.error(f"BigQuery authentication error during MERGE query execution: {e}. Ensure ADC is configured.")
+        # st.error(f"BigQuery authentication error: {e}")
+        return False
+    except google_cloud_exceptions.GoogleCloudError as e: # More specific Google Cloud exceptions
+        logging.error(f"A Google Cloud error occurred during MERGE query execution: {e}")
+        # st.error(f"A Google Cloud error occurred: {e}")
+        return False
+    except Exception as e:
+        logging.error(f"An unexpected error occurred during MERGE query execution: {e}")
+        # st.error(f"An unexpected error occurred: {e}")
         return False
