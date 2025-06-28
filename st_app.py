@@ -215,7 +215,7 @@ def _append_new_data_to_bigquery(new_restaurants: List[Dict[str, Any]], project_
         bigquery.SchemaField(sanitize_column_name('PostCode'), 'STRING'),
         bigquery.SchemaField(sanitize_column_name('RatingValue'), 'STRING'), # Can be "Pass", "Exempt", or number
         bigquery.SchemaField(sanitize_column_name('RatingKey'), 'STRING'),
-        bigquery.SchemaField(sanitize_column_name('RatingDate'), 'STRING'), # Or DATE if time component is not important
+        # RatingDate removed as it's not in ORIGINAL_COLUMNS_TO_KEEP and causes a warning
         bigquery.SchemaField(sanitize_column_name('LocalAuthorityCode'), 'STRING'),
         bigquery.SchemaField(sanitize_column_name('LocalAuthorityName'), 'STRING'),
         bigquery.SchemaField(sanitize_column_name('LocalAuthorityWebSite'), 'STRING'),
