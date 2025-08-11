@@ -79,28 +79,33 @@ def _parse_coordinates(coordinate_pairs_str: str) -> List[tuple[float, float]]:
 
 def _fetch_data_for_all_coordinates(valid_coords: List[tuple[float, float]], max_results: int) -> List[Dict[str, Any]]:
     """
-    Fetches API data for all valid coordinates and aggregates the results.
-    Displays warnings if results might be capped.
+    Fetches API data for all valid coordinates, handling pagination, and aggregates the results.
     """
     all_api_establishments = []
     st.info(f"Found {len(valid_coords)} valid coordinate pairs. Fetching data for each...")
     for lon, lat in valid_coords:
-        st.write(f"Fetching data for Longitude: {lon}, Latitude: {lat}...")
-        api_response = fetch_api_data(lon, lat, max_results)
-        time.sleep(4)  # Respect API rate limits
-        
-        if api_response:
-            establishments_list = api_response.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
-            if establishments_list is None:  # Handle cases where EstablishmentDetail might be null
-                establishments_list = []
-            
-            num_results_this_call = len(establishments_list)
-            st.info(f"API call for ({lon}, {lat}) returned {num_results_this_call} establishments.")
+        page = 1
+        while True:
+            st.write(f"Fetching data for Longitude: {lon}, Latitude: {lat}, Page: {page}...")
+            api_response = fetch_api_data(lon, lat, max_results, page)
+            time.sleep(4)  # Respect API rate limits
 
-            if num_results_this_call == max_results:
-                st.warning(f"Warning for ({lon}, {lat}): The API returned {num_results_this_call} results, matching `max_results`. Results might be capped.")
-            
-            all_api_establishments.extend(establishments_list)
+            if api_response:
+                establishments_list = api_response.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
+                if establishments_list is None:  # Handle cases where EstablishmentDetail might be null
+                    establishments_list = []
+
+                num_results_this_call = len(establishments_list)
+                st.info(f"API call for ({lon}, {lat}, Page: {page}) returned {num_results_this_call} establishments.")
+                all_api_establishments.extend(establishments_list)
+
+                if num_results_this_call < max_results:
+                    break  # Exit loop if the results are less than max_results, indicating the last page
+                else:
+                    page += 1  # Otherwise, increment page and continue
+            else:
+                st.error(f"Failed to fetch data for Longitude: {lon}, Latitude: {lat}, Page: {page}.")
+                break  # Exit loop on API error
     return all_api_establishments
 
 def _write_data_to_bigquery(master_restaurant_data: List[Dict[str, Any]], bq_full_path_str: str):
