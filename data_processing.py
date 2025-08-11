@@ -92,13 +92,21 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
 
     existing_fhrsid_set = set()
     for est in master_data:
-        if isinstance(est, dict) and 'fhrsid' in est and est['fhrsid'] is not None:
-            try:
-                canonical_fhrsid = str(int(est['fhrsid']))
-            except ValueError:
-                canonical_fhrsid = str(est['fhrsid'])
-                st.warning(f"FHRSID '{est['fhrsid']}' from master_data could not be converted to int. Using original string value for comparison.")
-            existing_fhrsid_set.add(canonical_fhrsid)
+        if isinstance(est, dict):
+            fhrsid_val = None
+            # Check for both 'FHRSID' and 'fhrsid' keys
+            if 'FHRSID' in est and est['FHRSID'] is not None:
+                fhrsid_val = est['FHRSID']
+            elif 'fhrsid' in est and est['fhrsid'] is not None:
+                fhrsid_val = est['fhrsid']
+
+            if fhrsid_val is not None:
+                try:
+                    canonical_fhrsid = str(int(fhrsid_val))
+                except (ValueError, TypeError):
+                    canonical_fhrsid = str(fhrsid_val)
+                    st.warning(f"FHRSID '{fhrsid_val}' from master_data could not be converted to int. Using original string value for comparison.")
+                existing_fhrsid_set.add(canonical_fhrsid)
 
     today_date = datetime.now().strftime("%Y-%m-%d")
     newly_added_restaurants: List[Dict[str, Any]] = []
@@ -169,7 +177,7 @@ def load_data_from_csv(uploaded_file: Any) -> Optional[pd.DataFrame]:
         otherwise None.
     """
     try:
-        df = pd.read_csv(uploaded_file)
+        df = pd.read_csv(uploaded_file, na_filter=False)
         if df.empty:
             st.error("The uploaded CSV file is empty.")
             return None
