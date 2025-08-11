@@ -19,12 +19,10 @@ from bq_utils import (
     append_to_bigquery, # Added for new flow
     execute_merge_query, # Added for MERGE operation
     BigQueryExecutionError,  # Added import
-    DataFrameConversionError, # Added import
-    get_recent_restaurants
+    DataFrameConversionError # Added import
 )
 from data_processing import load_json_from_local_file_path, load_master_data, process_and_update_master_data
 from data_processing import load_data_from_csv # Added for Update Fields
-from recent_restaurant_analysis import call_gemini_with_fhrs_data, create_recent_restaurants_temp_table
 
 def display_data(data_to_display: List[Dict[str, Any]]):
     """
@@ -616,7 +614,7 @@ def main_ui():
 
     app_mode = st.radio(
         "Choose an action:",
-        ("Fetch API Data", "Recent Restaurant Analysis", "Update Fields")
+        ("Fetch API Data", "Update Fields")
     )
 
     if app_mode == "Fetch API Data":
@@ -632,122 +630,6 @@ def main_ui():
                 max_results=max_results_input_ui,
                 bq_full_path_str=bq_full_path_ui
             )
-    elif app_mode == "Recent Restaurant Analysis":
-        st.subheader("Analyze Recently Added Restaurants")
-
-        # Input for N_DAYS
-        n_days_input = st.number_input(
-            "Enter the number of days to look back for recent restaurants (N_DAYS):",
-            min_value=1,
-            max_value=365,  # Max one year
-            value=7,        # Default to 7 days
-            help="Enter an integer between 1 and 365."
-        )
-
-        # Input for BigQuery table
-        bq_source_table_input = st.text_input(
-            "Enter BigQuery source table (project.dataset.table):",
-            placeholder="e.g., myproject.mydataset.restaurants"
-        )
-
-        # Button to trigger fetching
-        if st.button("Fetch Recent Restaurants"):
-            # Get inputs
-            n_days = n_days_input
-            bq_table_full_path = bq_source_table_input.strip()
-
-            if not bq_table_full_path:
-                st.error("BigQuery source table path is required.")
-            else:
-                try:
-                    project_id, dataset_id, table_id = bq_table_full_path.split('.')
-                    if not project_id or not dataset_id or not table_id:
-                        raise ValueError("Each part of 'project.dataset.table' must be non-empty.")
-
-                    st.info(f"Fetching recent restaurants from the last {n_days} days from {bq_table_full_path}...") # Made comprehensive
-
-                    # Call bq_utils function
-                    fetched_df = get_recent_restaurants(
-                        N_DAYS=n_days,
-                        project_id=project_id,
-                        dataset_id=dataset_id,
-                        table_id=table_id
-                    )
-
-                    if fetched_df is not None and not fetched_df.empty:
-                        print(f"Fetched recent restaurants DataFrame shape: {fetched_df.shape}") # Print log
-                        st.session_state.recent_restaurants_df = fetched_df
-                        st.success(f"Successfully fetched {len(fetched_df)} recent restaurants.") # Confirmed
-
-                        # Call create_recent_restaurants_temp_table here
-                        st.info(f"Creating/updating temporary table '{project_id}.{dataset_id}.recent_restaurants_temp' with these restaurants...") # Made comprehensive
-                        create_recent_restaurants_temp_table(
-                            restaurants_df=fetched_df,
-                            project_id=project_id,
-                            dataset_id=dataset_id
-                        )
-                        # The create_recent_restaurants_temp_table function has its own st.success/st.error messages.
-
-                        # Store project_id and dataset_id in session state
-                        st.session_state['current_project_id'] = project_id
-                        st.session_state['current_dataset_id'] = dataset_id
-                        st.info(f"Project ID ({project_id}) and Dataset ID ({dataset_id}) stored in session state.")
-                        st.session_state.displaying_genai_temp = False # Reset flag
-
-                    elif fetched_df is not None and fetched_df.empty:
-                        st.session_state.recent_restaurants_df = pd.DataFrame() # Store empty df
-                        st.warning("No recent restaurants found for the given criteria.")
-                    else: # Should ideally not happen if get_recent_restaurants returns empty df on error/no data
-                        st.session_state.recent_restaurants_df = None
-                        st.error("Failed to fetch recent restaurants. The function returned None.")
-
-                except ValueError as ve:
-                    st.error(f"Invalid BigQuery Table Path format: '{bq_table_full_path}'. Expected 'project.dataset.table'. Error: {ve}")
-                    st.session_state.recent_restaurants_df = None
-                except Exception as e:
-                    st.error(f"An error occurred while fetching recent restaurants: {e}")
-                    st.session_state.recent_restaurants_df = None
-
-        # Conditionally display the fetched recent restaurants DataFrame
-        if st.session_state.recent_restaurants_df is not None and \
-           not st.session_state.recent_restaurants_df.empty and \
-           not st.session_state.get('displaying_genai_temp', False):
-            st.subheader("Fetched Recent Restaurants")
-            st.dataframe(st.session_state.recent_restaurants_df)
-
-            if 'fhrsid' not in st.session_state.recent_restaurants_df.columns:
-                st.warning("The fetched data does not contain an 'fhrsid' column, which is required for Gemini analysis.")
-            else:
-                if st.button("Run Gemini Analysis on Recent Restaurants"):
-                    # Define Gemini Prompt (can be made configurable later)
-                    st.info("Starting Gemini analysis process...") # Added
-                    gemini_prompt = "Be succint and tell me what cuisine and dishes this specific London restaurant serve. \
-                        Do not infer from the name of the restaurant. Instead base your answer on what you find in Google Search. \
-                        Here is the Restaurant information: "
-
-                    try:
-                        # Call the Gemini analysis function
-                        st.info(f"Requesting Gemini analysis for restaurants in {st.session_state['current_project_id']}.{st.session_state['current_dataset_id']}...") # Made comprehensive
-                        insights_df = call_gemini_with_fhrs_data(
-                            project_id=st.session_state['current_project_id'],
-                            dataset_id=st.session_state['current_dataset_id'],
-                            gemini_prompt=gemini_prompt
-                        )
-
-                        if insights_df is not None and not insights_df.empty:
-                            print(f"Received insights DataFrame shape: {insights_df.shape}") # Print log
-                            st.info("Returning the table with Gemini insights for user front end")
-                            st.dataframe(insights_df)
-
-                            # The BigQuery update block has been removed as per the requirement.
-                            # The insights_df is displayed above, and no further BQ update happens here.
-
-                        else:
-                            st.warning("No insights were generated or returned, so the main table was not updated.")
-
-                    except Exception as e:
-                        st.error(f"An error occurred during Gemini analysis or subsequent table update: {e}")
-
     elif app_mode == "Update Fields":
         st.subheader("Update Table Fields using MERGE")
 

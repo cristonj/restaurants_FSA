@@ -5,6 +5,7 @@ from bq_utils import ORIGINAL_COLUMNS_TO_KEEP # Import ORIGINAL_COLUMNS_TO_KEEP
 from datetime import datetime
 import pandas as pd # Added for potential pd.NA usage if needed by tested functions directly
 import json # For load_json_from_local_file_path tests
+import io
 
 # --- Tests for load_json_from_local_file_path ---
 class TestLoadJsonFromLocalFilePath(unittest.TestCase):
@@ -234,18 +235,6 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         api_data = {'FHRSEstablishment': {}} # EstablishmentCollection is missing
         new_restaurants = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 0)
-        # This case results in api_establishments = [], which means the code calls:
-        # st.info("API response contained no establishments in 'EstablishmentDetail'.")
-        # OR if api_establishments is None (which it is not here), it calls st.warning.
-        # Since it's an empty list, it should be st.info.
-        # If EstablishmentDetail itself was missing, api_establishments would be [].
-        # If EstablishmentCollection was missing, api_establishments would be [].
-        # If FHRSEstablishment was missing, api_establishments would be [].
-        # The logic is:
-        # api_establishments = data.get('X', {}).get('Y', {}).get('Z', [])
-        # if api_establishments is None: st.warning(...)
-        # elif not api_establishments: st.info(...)
-        # All these missing key cases lead to api_establishments = [], thus st.info.
         mock_st.info.assert_any_call("API response contained no establishments in 'EstablishmentDetail'.")
 
 
@@ -255,7 +244,6 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         api_data = {} # FHRSEstablishment key is missing
         new_restaurants = process_and_update_master_data(master_data, api_data)
         self.assertEqual(len(new_restaurants), 0)
-        # Similar to above, this will result in api_establishments = []
         mock_st.info.assert_any_call("API response contained no establishments in 'EstablishmentDetail'.")
 
     @patch('data_processing.datetime')
@@ -268,7 +256,6 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         mock_datetime.now.return_value.strftime.return_value = mock_date_str
         master_data = []
 
-        # API data: FHRSID as int/str, BusinessName, some other fields not in ORIGINAL_COLUMNS_TO_KEEP
         api_est_int_fhrsid = {
             'FHRSID': 123, 'BusinessName': 'Testaurant Int',
             'RatingValue': 'Good', 'LocalAuthorityName': 'LA1', 'NewRatingPending': 'false',
@@ -293,7 +280,6 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
             self.assertEqual(r_new['manual_review'], "not reviewed")
             self.assertIsNone(r_new.get('gemini_insights')) # Default
 
-            # Ensure fields not in ORIGINAL_COLUMNS_TO_KEEP are absent
             self.assertNotIn('ExtraInfo', r_new)
             self.assertNotIn('AnotherExtra', r_new)
 
@@ -302,7 +288,6 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
                 self.assertEqual(r_new['RatingValue'], 'Good')
                 self.assertEqual(r_new['LocalAuthorityName'], 'LA1')
                 self.assertEqual(r_new['NewRatingPending'], 'false')
-                # Optional fields from ORIGINAL_COLUMNS_TO_KEEP not in API mock for this item
                 self.assertIsNone(r_new.get('AddressLine1'))
                 self.assertIsNone(r_new.get('AddressLine2'))
                 self.assertIsNone(r_new.get('AddressLine3'))
@@ -314,29 +299,24 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
                 self.assertEqual(r_new['NewRatingPending'], 'TRUE')
                 self.assertEqual(r_new['AddressLine1'], 'Street')
                 self.assertEqual(r_new['PostCode'], 'PC')
-                # Optional fields from ORIGINAL_COLUMNS_TO_KEEP not in API mock for this item
                 self.assertIsNone(r_new.get('AddressLine2'))
                 self.assertIsNone(r_new.get('AddressLine3'))
 
-    @patch('data_processing.datetime') # Mock datetime for predictable first_seen
-    @patch('data_processing.st')      # Mock streamlit
+    @patch('data_processing.datetime')
+    @patch('data_processing.st')
     def test_duplicate_fhrsid_in_api_data_is_added_once(self, mock_st, mock_datetime):
-        # Setup mock for datetime.now().strftime()
         mock_datetime_str = "2023-10-28"
         mock_datetime.now.return_value.strftime.return_value = mock_datetime_str
 
-        master_data = [{'FHRSID': "1", 'BusinessName': 'Old Restaurant'}] # One existing unrelated restaurant
+        master_data = [{'FHRSID': "1", 'BusinessName': 'Old Restaurant'}]
 
-        # API data with duplicates and one unique new entry
-        # FHRSID "789" is new but appears twice in the API data batch
-        # FHRSID "101" is new and appears once
         api_restaurant_duplicate_1 = {
             'FHRSID': "789", 'BusinessName': 'Duplicate Cafe Batch 1',
             'RatingValue': '5', 'AddressLine1': 'Addr D1', 'PostCode': 'PC D1',
             'LocalAuthorityName': 'LA D1', 'NewRatingPending': 'false'
         }
-        api_restaurant_duplicate_2 = { # Same FHRSID as above
-            'FHRSID': "789", 'BusinessName': 'Duplicate Cafe Batch 2', # Slightly different data for realism
+        api_restaurant_duplicate_2 = {
+            'FHRSID': "789", 'BusinessName': 'Duplicate Cafe Batch 2',
             'RatingValue': '5', 'AddressLine1': 'Addr D2', 'PostCode': 'PC D2',
             'LocalAuthorityName': 'LA D2', 'NewRatingPending': 'false'
         }
@@ -349,19 +329,17 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': [
             api_restaurant_duplicate_1,
             api_restaurant_unique_new,
-            api_restaurant_duplicate_2 # Second occurrence of FHRSID "789"
+            api_restaurant_duplicate_2
         ]}}}
 
         new_restaurants = process_and_update_master_data(master_data, api_data)
 
         self.assertEqual(len(new_restaurants), 2, "Should identify 2 unique new restaurants.")
 
-        # Extract FHRSIDs from the results for easier checking
         result_fhrsids = {r['FHRSID'] for r in new_restaurants}
         self.assertIn("789", result_fhrsids, "FHRSID 789 should be in the results.")
         self.assertIn("101", result_fhrsids, "FHRSID 101 should be in the results.")
 
-        # Verify that the first occurrence's data for FHRSID "789" was kept
         restaurant_789_data = next((r for r in new_restaurants if r['FHRSID'] == "789"), None)
         self.assertIsNotNone(restaurant_789_data)
         self.assertEqual(restaurant_789_data['BusinessName'], 'Duplicate Cafe Batch 1')
@@ -380,36 +358,29 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
     @patch('data_processing.datetime')
     @patch('data_processing.st')
     def test_canonical_fhrsid_deduplication_and_non_numeric(self, mock_st, mock_datetime):
-        # Setup mock for datetime.now().strftime()
         mock_datetime_str = "2023-11-15"
         mock_datetime.now.return_value.strftime.return_value = mock_datetime_str
 
-        # Define master_data
         master_data = [
-            {'FHRSID': 123, 'BusinessName': 'Integer Master', 'AddressLine1': 'Addr Master 1'}, # Will be "123"
-            {'FHRSID': "456", 'BusinessName': 'Canonical String Master', 'AddressLine1': 'Addr Master 2'}, # Already "456"
-            {'FHRSID': "ABC", 'BusinessName': 'NonNumeric Master', 'AddressLine1': 'Addr Master 3'}, # "ABC", will warn
-            {'FHRSID': "M1X", 'BusinessName': 'Malformed Master', 'AddressLine1': 'Addr Master 4'}, # "M1X", will warn
-            {'FHRSID': None, 'BusinessName': 'None FHRSID Master', 'AddressLine1': 'Addr Master 5'} # Skipped
+            {'FHRSID': 123, 'BusinessName': 'Integer Master', 'AddressLine1': 'Addr Master 1'},
+            {'FHRSID': "456", 'BusinessName': 'Canonical String Master', 'AddressLine1': 'Addr Master 2'},
+            {'FHRSID': "ABC", 'BusinessName': 'NonNumeric Master', 'AddressLine1': 'Addr Master 3'},
+            {'FHRSID': "M1X", 'BusinessName': 'Malformed Master', 'AddressLine1': 'Addr Master 4'},
+            {'FHRSID': None, 'BusinessName': 'None FHRSID Master', 'AddressLine1': 'Addr Master 5'}
         ]
 
-        # Define api_data
         api_establishments = [
-            # Duplicates of master_data after canonicalization
-            {'FHRSID': "0123", 'BusinessName': 'Integer API Dup', 'AddressLine1': 'Addr API 1'}, # Should become "123"
-            {'FHRSID': "456", 'BusinessName': 'Canonical String API Dup', 'AddressLine1': 'Addr API 2'}, # Is "456"
-            {'FHRSID': "ABC", 'BusinessName': 'NonNumeric API Dup', 'AddressLine1': 'Addr API 3'}, # Is "ABC", will warn
-            {'FHRSID': "M1X", 'BusinessName': 'Malformed API Dup', 'AddressLine1': 'Addr API 4'}, # Is "M1X", will warn
-            # New establishments
-            {'FHRSID': "0789", 'BusinessName': 'New Numeric Normalized', 'AddressLine1': 'Addr API 5'}, # Becomes "789"
-            {'FHRSID': "DEF", 'BusinessName': 'New NonNumeric', 'AddressLine1': 'Addr API 6'}, # Is "DEF", will warn
-            {'FHRSID': "A2Y", 'BusinessName': 'New Malformed API', 'AddressLine1': 'Addr API 7'}, # Is "A2Y", will warn
-            # Skipped API entry
+            {'FHRSID': "0123", 'BusinessName': 'Integer API Dup', 'AddressLine1': 'Addr API 1'},
+            {'FHRSID': "456", 'BusinessName': 'Canonical String API Dup', 'AddressLine1': 'Addr API 2'},
+            {'FHRSID': "ABC", 'BusinessName': 'NonNumeric API Dup', 'AddressLine1': 'Addr API 3'},
+            {'FHRSID': "M1X", 'BusinessName': 'Malformed API Dup', 'AddressLine1': 'Addr API 4'},
+            {'FHRSID': "0789", 'BusinessName': 'New Numeric Normalized', 'AddressLine1': 'Addr API 5'},
+            {'FHRSID': "DEF", 'BusinessName': 'New NonNumeric', 'AddressLine1': 'Addr API 6'},
+            {'FHRSID': "A2Y", 'BusinessName': 'New Malformed API', 'AddressLine1': 'Addr API 7'},
             {'FHRSID': None, 'BusinessName': 'None FHRSID API', 'AddressLine1': 'Addr API 8'}
         ]
-        # Add other required fields from ORIGINAL_COLUMNS_TO_KEEP to all api_establishments for simplicity
         for est_api in api_establishments:
-            if est_api['FHRSID'] is not None: # Only add to valid entries for processing
+            if est_api['FHRSID'] is not None:
                 est_api.update({key: None for key in ORIGINAL_COLUMNS_TO_KEEP if key not in est_api})
 
         api_data = {'FHRSEstablishment': {'EstablishmentCollection': {'EstablishmentDetail': api_establishments}}}
@@ -422,23 +393,10 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         expected_fhrsids = sorted(["789", "DEF", "A2Y"])
         self.assertEqual(added_fhrsids, expected_fhrsids, "FHRSIDs of new restaurants should be the canonical forms.")
 
-        # Check data for one of the new restaurants to ensure fields are set
         new_def = next(r for r in new_restaurants if r['FHRSID'] == "DEF")
         self.assertEqual(new_def['BusinessName'], 'New NonNumeric')
         self.assertEqual(new_def['first_seen'], mock_datetime_str)
         self.assertEqual(new_def['manual_review'], "not reviewed")
-
-        # Verify st.warning calls
-        # Expected warnings:
-        # 1. Master: "ABC" (int("ABC") fails)
-        # 2. Master: "M1X" (int("M1X") fails)
-        # 3. API: "ABC" (int("ABC") fails during its canonicalization)
-        # 4. API: "M1X" (int("M1X") fails during its canonicalization)
-        # 5. API: "DEF" (int("DEF") fails during its canonicalization)
-        # 6. API: "A2Y" (int("A2Y") fails during its canonicalization)
-
-        # Note: The FHRSID "0123" from API becomes "123" without warning.
-        # FHRSID "456" from API is already canonical and numeric, no warning.
 
         expected_warning_calls = [
             unittest.mock.call("FHRSID 'ABC' from master_data could not be converted to int. Using original string value for comparison."),
@@ -449,14 +407,9 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
             unittest.mock.call("FHRSID 'A2Y' from API data could not be converted to int. Using original string value.")
         ]
 
-        # Check if all expected calls are present, regardless of order for warnings from the same source (master/api)
-        # However, the order of master data warnings should precede api data warnings.
-        # And within API data, the order should be as per api_establishments list.
-        # So, a direct comparison of call_args_list is better.
         mock_st.warning.assert_has_calls(expected_warning_calls, any_order=False)
         self.assertEqual(mock_st.warning.call_count, 6, "Expected 6 warning calls.")
 
-        # Also check success message for the correct count
         mock_st.success.assert_called_once_with("Processed API response. Identified 3 unique new restaurant records to be added.")
 
     @patch('data_processing.datetime')
@@ -465,40 +418,30 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
         mock_date_str = "2024-01-01"
         mock_datetime.now.return_value.strftime.return_value = mock_date_str
 
-        # Master data uses lowercase 'fhrsid'
         master_data = [
-            {'fhrsid': "123", 'BusinessName': 'BQ Cafe Old'}, # Numeric FHRSID
-            {'fhrsid': "ABC", 'BusinessName': 'BQ NonNumeric Old'} # Non-numeric FHRSID
-            # Other ORIGINAL_COLUMNS_TO_KEEP fields are not strictly necessary for master_data
-            # in the context of FHRSID matching, as the function only uses 'fhrsid'.
+            {'fhrsid': "123", 'BusinessName': 'BQ Cafe Old'},
+            {'fhrsid': "ABC", 'BusinessName': 'BQ NonNumeric Old'}
         ]
 
-        # API data uses 'FHRSID' and includes all ORIGINAL_COLUMNS_TO_KEEP for new items
         api_establishments = [
-            # Matches master_data 'fhrsid': "123"
             {'FHRSID': "123", 'BusinessName': 'API Cafe Update', 'RatingValue': '3', 'NewRatingPending': 'false',
              'AddressLine1': 'Addr1', 'AddressLine2': None, 'AddressLine3': None, 'PostCode': 'PC1',
              'LocalAuthorityName': 'LA1', 'gemini_insights': None},
-            # New numeric FHRSID
             {'FHRSID': "789", 'BusinessName': 'API Cafe New Numeric', 'RatingValue': '5', 'NewRatingPending': 'false',
              'AddressLine1': 'Addr2', 'AddressLine2': 'Suite B', 'AddressLine3': None, 'PostCode': 'PC2',
              'LocalAuthorityName': 'LA2', 'gemini_insights': 'Good place'},
-            # Matches master_data 'fhrsid': "ABC"
             {'FHRSID': "ABC", 'BusinessName': 'API NonNumeric Update', 'RatingValue': '2', 'NewRatingPending': 'true',
              'AddressLine1': 'Addr3', 'AddressLine2': None, 'AddressLine3': 'Old Town', 'PostCode': 'PC3',
              'LocalAuthorityName': 'LA3', 'gemini_insights': None},
-            # New non-numeric FHRSID
             {'FHRSID': "XYZ", 'BusinessName': 'API Cafe New NonNumeric', 'RatingValue': '1', 'NewRatingPending': 'true',
              'AddressLine1': 'Addr4', 'AddressLine2': None, 'AddressLine3': None, 'PostCode': 'PC4',
              'LocalAuthorityName': 'LA4', 'gemini_insights': None}
         ]
-        # Ensure all ORIGINAL_COLUMNS_TO_KEEP are present if not already defined for API items
         for est_api in api_establishments:
             for key in ORIGINAL_COLUMNS_TO_KEEP:
-                if key not in est_api: # Set missing keys to None for realistic processing by the function
+                if key not in est_api:
                     est_api[key] = None
-            # Ensure FHRSID is present as it's the primary key for matching
-            if 'FHRSID' not in est_api: # Should not happen with above data, but good check
+            if 'FHRSID' not in est_api:
                 est_api['FHRSID'] = None
 
 
@@ -527,24 +470,18 @@ class TestProcessAndUpdateMasterData(unittest.TestCase):
             'AddressLine1': 'Addr4', 'PostCode': 'PC4', 'LocalAuthorityName': 'LA4'
         })
 
-        # Check details of the new restaurants
         for r_new in new_restaurants:
             if r_new['FHRSID'] == "789":
                 self.assertEqual(r_new, expected_new_numeric)
             elif r_new['FHRSID'] == "XYZ":
                 self.assertEqual(r_new, expected_new_non_numeric)
 
-        # Assert st.warning calls
-        # 1. Master: "ABC" (int(est['fhrsid']) fails)
-        # 2. API: "ABC" (int(original_api_fhrsid) fails for its canonicalization)
-        # 3. API: "XYZ" (int(original_api_fhrsid) fails for its canonicalization)
         expected_warning_calls = [
             unittest.mock.call("FHRSID 'ABC' from master_data could not be converted to int. Using original string value for comparison."),
             unittest.mock.call("FHRSID 'ABC' from API data could not be converted to int. Using original string value."),
             unittest.mock.call("FHRSID 'XYZ' from API data could not be converted to int. Using original string value.")
         ]
-        # Use assert_has_calls which allows for other calls in between, or check call_count and specific calls
-        mock_st.warning.assert_has_calls(expected_warning_calls, any_order=False) # Order should be preserved here
+        mock_st.warning.assert_has_calls(expected_warning_calls, any_order=False)
         self.assertEqual(mock_st.warning.call_count, 3, "Expected 3 warning calls for non-numeric FHRSIDs.")
 
         mock_st.success.assert_called_once_with("Processed API response. Identified 2 unique new restaurant records to be added.")
@@ -554,11 +491,11 @@ if __name__ == '__main__':
     unittest.main()
 
 # --- Tests for load_data_from_csv ---
-from data_processing import load_data_from_csv # Already imported at top but good for section visibility
-import io # For io.StringIO
+from data_processing import load_data_from_csv
+import io
 
 class TestLoadDataFromCsv(unittest.TestCase):
-    @patch('data_processing.st.error') # Mock st.error from data_processing module
+    @patch('data_processing.st.error')
     def test_successful_load(self, mock_st_error):
         csv_content = '"fhrsid","colA"\n"1","abc"\n"2","def"'
         simulated_file = io.StringIO(csv_content)
@@ -583,7 +520,6 @@ class TestLoadDataFromCsv(unittest.TestCase):
 
     @patch('data_processing.st.error')
     def test_empty_csv_file_content(self, mock_st_error):
-        # This simulates a file that was uploaded but its content is empty, leading to EmptyDataError
         csv_content = ""
         simulated_file = io.StringIO(csv_content)
 
@@ -594,31 +530,11 @@ class TestLoadDataFromCsv(unittest.TestCase):
 
     @patch('data_processing.st.error')
     def test_empty_csv_file_just_headers(self, mock_st_error):
-        # CSV with only headers, no data rows
         csv_content = '"fhrsid","colA"'
         simulated_file = io.StringIO(csv_content)
 
         df = load_data_from_csv(simulated_file)
 
-        self.assertIsNotNone(df)
-        self.assertTrue(df.empty)
-        self.assertListEqual(list(df.columns), ['fhrsid', 'colA']) # Columns should still be there
-        # The function `load_data_from_csv` itself has a check for `df.empty` after read_csv
-        # and returns this empty DataFrame. It doesn't call st.error in this specific case.
-        # However, the initial implementation in the prompt for load_data_from_csv was:
-        # "if df.empty: st.error("The uploaded CSV file is empty."); return None"
-        # The implemented code for load_data_from_csv in data_processing.py is:
-        # "if df.empty: st.error("The uploaded CSV file is empty."); return None"
-        # This means this test case should expect st.error and None.
-        # Self-correction based on actual implementation of load_data_from_csv:
-        # It should return None and call st.error.
-        # Let's re-verify the implementation in `data_processing.py` for `load_data_from_csv`:
-        # try:
-        #   df = pd.read_csv(uploaded_file)
-        #   if df.empty:  <-- This is after successful read_csv
-        #     st.error("The uploaded CSV file is empty.")
-        #     return None
-        # This test should assert st.error was called and df is None.
         self.assertIsNone(df)
         mock_st_error.assert_called_once_with("The uploaded CSV file is empty.")
 
@@ -631,32 +547,31 @@ class TestLoadDataFromCsv(unittest.TestCase):
         df = load_data_from_csv(simulated_file)
 
         self.assertIsNotNone(df)
-        self.assertIn('fhrsid', df.columns) # Should be renamed to lowercase 'fhrsid'
+        self.assertIn('fhrsid', df.columns)
         self.assertTrue(pd.api.types.is_string_dtype(df['fhrsid']))
         self.assertEqual(df['fhrsid'].iloc[0], "1")
         mock_st_error.assert_not_called()
 
     @patch('data_processing.st.error')
     def test_parser_error_malformed_csv(self, mock_st_error):
-        # Malformed CSV (e.g., inconsistent number of columns per row after header)
-        csv_content = '"fhrsid","colA"\n"1"' # Second row has only one value
+        csv_content = '"fhrsid","colA"\n"1"'
         simulated_file = io.StringIO(csv_content)
 
-        df = load_data_from_csv(simulated_file)
+        with patch('pandas.read_csv', side_effect=pd.errors.ParserError("Test error")):
+            df = load_data_from_csv(simulated_file)
 
         self.assertIsNone(df)
         mock_st_error.assert_called_once_with("Error parsing the CSV file. Please ensure it's a valid CSV format.")
 
     @patch('data_processing.st.error')
     def test_fhrsid_column_present_but_empty_values(self, mock_st_error):
-        csv_content = '"fhrsid","colA"\n"","abc"\n"","def"' # fhrsid values are empty strings
+        csv_content = '"fhrsid","colA"\n"","abc"\n"","def"'
         simulated_file = io.StringIO(csv_content)
 
         df = load_data_from_csv(simulated_file)
 
         self.assertIsNotNone(df)
         self.assertEqual(len(df), 2)
-        # load_data_from_csv converts fhrsid to string. Empty strings are valid strings.
         pd.testing.assert_series_equal(df['fhrsid'], pd.Series(["", ""], name='fhrsid', dtype=str))
         mock_st_error.assert_not_called()
 
@@ -665,9 +580,6 @@ class TestLoadDataFromCsv(unittest.TestCase):
         simulated_file = MagicMock()
         simulated_file.read.side_effect = Exception("Unexpected read error")
 
-        # We need to ensure pd.read_csv gets this mock.
-        # This is tricky because pd.read_csv takes the file object directly.
-        # We'll patch pd.read_csv itself for this one case.
         with patch('data_processing.pd.read_csv', side_effect=Exception("Simulated pandas error")):
             df = load_data_from_csv(simulated_file)
 
