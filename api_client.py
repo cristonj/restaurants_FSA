@@ -2,7 +2,7 @@ import requests
 import streamlit as st
 from typing import Optional, Dict, Any
 
-def fetch_api_data(longitude: float, latitude: float, max_results: int) -> Optional[Dict[str, Any]]:
+def fetch_api_data(longitude: float, latitude: float, max_results: int, page: int = 1) -> Optional[Dict[str, Any]]:
     """
     Fetches data from the Food Standards Agency API.
 
@@ -10,11 +10,12 @@ def fetch_api_data(longitude: float, latitude: float, max_results: int) -> Optio
         longitude: The longitude for the API search.
         latitude: The latitude for the API search.
         max_results: The maximum number of results to fetch from the API.
+        page: The page number of the results to fetch.
 
     Returns:
         A dictionary containing the JSON response from the API, or None if an error occurs.
     """
-    api_url = f"https://api1-ratings.food.gov.uk/enhanced-search/en-GB/%5e/%5e/DISTANCE/1/Englad/{longitude}/{latitude}/1/{max_results}/json"
+    api_url = f"https://api1-ratings.food.gov.uk/enhanced-search/en-GB/%5e/%5e/DISTANCE/1/Englad/{longitude}/{latitude}/{page}/{max_results}/json"
     try:
         response = requests.get(api_url)
         if response.status_code == 200:
