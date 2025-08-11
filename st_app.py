@@ -437,167 +437,6 @@ def handle_fetch_data_action(
     # If the expectation is to return the "complete" data after append, this would need adjustment.
     return master_restaurant_data
 
-def handle_update_fields_action(master_table_path_str: str, uploaded_csv_file: Any):
-    """
-    Placeholder for handling the CSV update functionality.
-    """
-    # 1. Parse BigQuery Path
-    try:
-        project_id, dataset_id, table_id = master_table_path_str.split('.')
-        if not all([project_id, dataset_id, table_id]): # Check for empty strings
-            st.error("Invalid BigQuery Table Path format. Each part of 'project.dataset.table' must be non-empty.")
-            return
-    except ValueError:
-        st.error(f"Invalid BigQuery Table Path format: '{master_table_path_str}'. Expected 'project.dataset.table'.")
-        return
-
-    # 2. Load CSV Data
-    # load_data_from_csv handles its own st.error messages if uploaded_csv_file is bad or fhrsid is missing
-    df = load_data_from_csv(uploaded_csv_file)
-    if df is None:
-        # Error message already displayed by load_data_from_csv
-        return
-
-    if 'fhrsid' not in df.columns:
-        # This should be caught by load_data_from_csv, but as a safeguard:
-        st.error("Critical error: 'fhrsid' column is missing from DataFrame after load_data_from_csv. This should not happen.")
-        return
-
-    # 3. Iterate and Update
-    success_count = 0
-    error_count = 0
-
-    if df.empty:
-        st.warning("The CSV file was successfully loaded, but it contains no data rows to process.")
-        return
-
-    st.info(f"Starting update process for {len(df)} row(s) from the CSV...")
-
-    for index, row in df.iterrows():
-        fhrsid = row['fhrsid'] # This is already string type from load_data_from_csv
-        update_data = row.drop('fhrsid').to_dict()
-
-        # Remove any NaN values from update_data, as they are likely not intended for update
-        # and might cause issues with type handling in update_rows_in_bigquery if not explicitly handled there.
-        # BQ `UPDATE` with `SET col = NULL` is the way to set NULL, which update_rows_in_bigquery handles if value is None.
-        # Pandas `NaN` is usually float, so direct conversion to `None` is better.
-        update_data_cleaned = {k: None if pd.isna(v) else v for k, v in update_data.items()}
-
-        if not update_data_cleaned:
-            st.warning(f"Skipping FHRSID {fhrsid}: No data to update after removing 'fhrsid' and empty values.")
-            error_count +=1 # Or perhaps a different counter for skipped rows
-            continue
-
-        st.write(f"Processing FHRSID: {fhrsid} with data: {update_data_cleaned}") # For debugging, can be removed
-
-        success = update_rows_in_bigquery(
-            project_id=project_id,
-            dataset_id=dataset_id,
-            table_id=table_id,
-            fhrsid=fhrsid, # Already a string
-            update_data=update_data_cleaned
-        )
-
-        if success:
-            success_count += 1
-        else:
-            error_count += 1
-            st.warning(f"Failed to update row in BigQuery for fhrsid: {fhrsid}. Check console logs from bq_utils for details.")
-
-    # 4. Display Summary
-    st.success(f"Update process completed. Successfully updated rows: {success_count}")
-    if error_count > 0:
-        st.error(f"Failed to update rows: {error_count}")
-    if success_count == 0 and error_count == 0 and not df.empty:
-        st.info("No rows were processed for update. This might happen if all rows had no data after removing fhrsid.")
-
-def handle_merge_update_action(master_table_path: str, update_table_path: str, matching_id: str, field_to_update: str):
-    """
-    Constructs and executes a MERGE SQL query to update a field in the master table
-    from an update table. After successful execution, it fetches and displays the master table.
-    """
-    st.info(f"Initiating MERGE operation to update '{field_to_update}' in '{master_table_path}' using '{update_table_path}' on matching '{matching_id}'.")
-
-    try:
-        master_parts = master_table_path.split('.')
-        update_parts = update_table_path.split('.')
-        if len(master_parts) != 3 or not all(master_parts):
-            st.error(f"Invalid BigQuery Master Table Path: '{master_table_path}'. Expected 'project.dataset.table'.")
-            return
-        if len(update_parts) != 3 or not all(update_parts):
-            st.error(f"Invalid BigQuery Update Table Path: '{update_table_path}'. Expected 'project.dataset.table'.")
-            return
-
-        master_project_id, master_dataset_id, master_table_id = master_parts
-        # Assuming update table is in the same project, which is common for MERGE.
-        # If not, the query needs to qualify the update table path fully.
-        # For now, we'll assume the paths provided are fully qualified if cross-project.
-
-        # Sanitize column names for safety, though BQ is generally okay with original names in queries if not keywords.
-        # However, matching_id and field_to_update are used directly in SQL.
-        # It's crucial these don't contain SQL injection if they were from less trusted sources.
-        # For this app, they come from text inputs, so less risk, but good to be aware.
-        # No actual sanitization applied here to keep it simple, assuming valid column names.
-
-        merge_query = f"""
-        MERGE `{master_table_path}` T
-        USING `{update_table_path}` S
-        ON T.{matching_id} = S.{matching_id}
-        WHEN MATCHED THEN
-          UPDATE SET T.{field_to_update} = S.{field_to_update}
-        """
-
-        st.info("Constructed MERGE query. Executing...")
-        st.code(merge_query, language="sql")
-
-        # Placeholder for the actual BQ execution function
-        # This function needs to be created in bq_utils.py
-        # It should take the query and project_id (for client initialization)
-        # from bq_utils import execute_merge_query # This import would be at the top of the file
-
-        # For now, let's assume bq_utils.execute_merge_query exists and works
-        # We'll need to import it at the top of st_app.py
-        # from bq_utils import execute_merge_query (ensure this import is added)
-
-        # The project_id for execute_merge_query should ideally be the one where the query runs,
-        # which is typically the project of the master table.
-        # query_project_id = master_project_id
-
-        # Simulate execution for now
-        # success = bq_utils.execute_merge_query(merge_query, project_id=query_project_id)
-
-        # --- SIMULATED EXECUTION ---
-        st.warning("Simulating MERGE query execution. `bq_utils.execute_merge_query` needs to be implemented.")
-        # To make this runnable without the actual bq_utils.execute_merge_query:
-        # The project_id for execute_merge_query should ideally be the one where the query runs,
-        # which is typically the project of the master table.
-        query_project_id = master_project_id
-
-        success = execute_merge_query(merge_query, project_id=query_project_id)
-
-        if success:
-            st.success("MERGE operation completed successfully.")
-            st.info(f"Loading and displaying updated master table: {master_table_path}")
-
-            updated_master_data = load_all_data_from_bq(
-                project_id=master_project_id,
-                dataset_id=master_dataset_id,
-                table_id=master_table_id
-            )
-            if updated_master_data:
-                display_data(updated_master_data)
-            else:
-                st.warning(f"Could not load data from {master_table_path} after update, or table is empty.")
-        else:
-            st.error("MERGE operation failed. Check logs for details.")
-
-    except ValueError as ve: # Catches split issues if paths are malformed
-        st.error(f"Error parsing BigQuery table paths: {ve}")
-    except ImportError:
-        st.error("A required BigQuery utility function (e.g., execute_merge_query or load_all_data_from_bq) is not available. Please ensure bq_utils.py is correct and all imports are set up.")
-    except Exception as e:
-        st.error(f"An unexpected error occurred during the MERGE operation: {e}")
-
 def main_ui():
     st.title("Food Standards Agency API Explorer")
 
@@ -612,54 +451,18 @@ def main_ui():
         st.session_state.displaying_genai_temp = False
 
 
-    app_mode = st.radio(
-        "Choose an action:",
-        ("Fetch API Data", "Update Fields")
-    )
+    st.subheader("Fetch API Data and Update Master List")
+    coordinate_pairs_input = st.text_area("Enter longitude,latitude pairs (one per line):")
+    # These _ui variables are used to distinguish from the parameters of handle_fetch_data_action
+    max_results_input_ui = st.number_input("Enter Max Results for API Call", min_value=1, max_value=5000, value=200)
+    bq_full_path_ui = st.text_input("Enter BigQuery Table Path for master data and to write updated data (project.dataset.table)")
 
-    if app_mode == "Fetch API Data":
-        st.subheader("Fetch API Data and Update Master List")
-        coordinate_pairs_input = st.text_area("Enter longitude,latitude pairs (one per line):")
-        # These _ui variables are used to distinguish from the parameters of handle_fetch_data_action
-        max_results_input_ui = st.number_input("Enter Max Results for API Call", min_value=1, max_value=5000, value=200)
-        bq_full_path_ui = st.text_input("Enter BigQuery Table Path for master data and to write updated data (project.dataset.table)")
-
-        if st.button("Fetch Data"):
-            handle_fetch_data_action(
-                coordinate_pairs_str=coordinate_pairs_input,
-                max_results=max_results_input_ui,
-                bq_full_path_str=bq_full_path_ui
-            )
-    elif app_mode == "Update Fields":
-        st.subheader("Update Table Fields using MERGE")
-
-        master_table_path_input = st.text_input(
-            "Enter BigQuery master table path (project.dataset.table)",
-            key="merge_master_table_path"
+    if st.button("Fetch Data"):
+        handle_fetch_data_action(
+            coordinate_pairs_str=coordinate_pairs_input,
+            max_results=max_results_input_ui,
+            bq_full_path_str=bq_full_path_ui
         )
-        update_table_path_input = st.text_input(
-            "Enter BigQuery update table path (project.dataset.table)",
-            key="merge_update_table_path"
-        )
-        matching_id_input = st.text_input(
-            "Enter the matching ID column name (e.g., fhrsid)",
-            key="merge_matching_id"
-        )
-        field_to_update_input = st.text_input(
-            "Enter the field to update from the update table",
-            key="merge_field_to_update"
-        )
-
-        if st.button("Update Fields from Table", key="merge_update_button"):
-            if not all([master_table_path_input, update_table_path_input, matching_id_input, field_to_update_input]):
-                st.error("Please fill in all the fields for the MERGE operation.")
-            else:
-                handle_merge_update_action(
-                    master_table_path_input,
-                    update_table_path_input,
-                    matching_id_input,
-                    field_to_update_input
-                )
 
 
 if __name__ == "__main__":
