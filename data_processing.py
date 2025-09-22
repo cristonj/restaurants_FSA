@@ -82,13 +82,18 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
     Returns:
         A list of newly added restaurant dictionaries, unique within this processing batch.
     """
+    import logging
+    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+    
     api_establishments = api_data.get('FHRSEstablishment', {}).get('EstablishmentCollection', {}).get('EstablishmentDetail', [])
     
     if api_establishments is None: 
         api_establishments = []
         st.warning("No 'EstablishmentDetail' found in API response or it was None. No new establishments from API to process.")
+        logging.warning("No EstablishmentDetail in API response")
     elif not api_establishments: 
          st.info("API response contained no establishments in 'EstablishmentDetail'.")
+         logging.info("Empty EstablishmentDetail in API response")
 
     existing_fhrsid_set = set()
     for est in master_data:
@@ -105,8 +110,10 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
                     canonical_fhrsid = str(int(fhrsid_val))
                 except (ValueError, TypeError):
                     canonical_fhrsid = str(fhrsid_val)
-                    st.warning(f"FHRSID '{fhrsid_val}' from master_data could not be converted to int. Using original string value for comparison.")
+                    logging.warning(f"FHRSID '{fhrsid_val}' from master_data could not be converted to int")
                 existing_fhrsid_set.add(canonical_fhrsid)
+    
+    logging.info(f"Found {len(existing_fhrsid_set)} existing FHRSIDs in master data")
 
     today_date = datetime.now().strftime("%Y-%m-%d")
     newly_added_restaurants: List[Dict[str, Any]] = []
@@ -148,18 +155,23 @@ def process_and_update_master_data(master_data: List[Dict[str, Any]], api_data: 
                     newly_added_restaurants.append(processed_establishment)
                     fhrsids_processed_in_this_batch.add(canonical_api_fhrsid) # Add to batch tracking set
                 else:
-                    # Optional: Log that a duplicate FHRSID within the current API batch was skipped.
-                    # Using print for now, can be changed to st.info or a more formal logger.
-                    print(f"Skipping duplicate FHRSID {canonical_api_fhrsid} found within the current API batch (already processed).")
-            # else:
-                # Optional: Log that FHRSID was found in existing_fhrsid_set (already in BQ).
-                # print(f"FHRSID {canonical_api_fhrsid} already exists in BigQuery master data. Skipping.")
+                    # Log that a duplicate FHRSID within the current API batch was skipped.
+                    logging.info(f"Skipping duplicate FHRSID {canonical_api_fhrsid} found within the current API batch (already processed).")
+            else:
+                # Log that FHRSID was found in existing_fhrsid_set (already in BQ).
+                logging.debug(f"FHRSID {canonical_api_fhrsid} already exists in BigQuery master data. Skipping.")
     
     count_new_restaurants = len(newly_added_restaurants)
+    count_already_existing = len([est for est in api_establishments if isinstance(est, dict) and 'FHRSID' in est]) - count_new_restaurants
+    
+    logging.info(f"Processing summary: {count_new_restaurants} new restaurants, {count_already_existing} already existing")
+    
     if count_new_restaurants > 0:
         st.success(f"Processed API response. Identified {count_new_restaurants} unique new restaurant records to be added.")
+        logging.info(f"Identified {count_new_restaurants} new restaurants to add")
     else:
-        st.info("Processed API response. No new restaurant records identified (or all were duplicates within the batch or already in BigQuery).")
+        st.info("Processed API response. No new restaurant records identified (all FHRSIDs already exist in BigQuery).")
+        logging.info("No new restaurants identified - all FHRSIDs already exist")
 
     return newly_added_restaurants
 
