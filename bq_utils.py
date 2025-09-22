@@ -10,7 +10,7 @@ ORIGINAL_COLUMNS_TO_KEEP = [
 
 from google.cloud import bigquery, exceptions as google_cloud_exceptions # Added google_cloud_exceptions
 from google.cloud.bigquery.client import Client # Explicit import for type hinting if needed elsewhere
-from typing import List, Dict, Any # Removed Optional, Added Dict, Any
+from typing import List, Dict, Any, Tuple # Removed Optional, Added Dict, Any, Tuple
 import re
 import pandas_gbq # Added import
 from google.auth.exceptions import DefaultCredentialsError # Added import
@@ -369,6 +369,217 @@ def update_rows_in_bigquery(project_id: str, dataset_id: str, table_id: str, fhr
         print(f"An error occurred during BigQuery UPDATE: {e}")
         # st.error(f"An error occurred during BigQuery UPDATE: {e}")
         return False
+
+def get_existing_fhrsids(project_id: str, dataset_id: str, table_id: str) -> set:
+    """
+    Fetches all existing FHRSIDs from a BigQuery table.
+    
+    Args:
+        project_id: The Google Cloud project ID.
+        dataset_id: The BigQuery dataset ID.
+        table_id: The BigQuery table ID.
+    
+    Returns:
+        A set of existing FHRSIDs as strings. Returns empty set on error.
+    """
+    table_ref_str = f"{project_id}.{dataset_id}.{table_id}"
+    # Use the sanitized column name for FHRSID
+    query = f"SELECT DISTINCT {FHRSID_COLNAME} FROM `{table_ref_str}`"
+    
+    logging.info(f"Fetching existing FHRSIDs from {table_ref_str}")
+    
+    try:
+        client = bigquery.Client(project=project_id)
+        query_job = client.query(query)
+        results = query_job.result()
+        
+        fhrsid_set = set()
+        for row in results:
+            if row[FHRSID_COLNAME] is not None:
+                # Convert to string for consistent comparison
+                fhrsid_set.add(str(row[FHRSID_COLNAME]))
+        
+        logging.info(f"Found {len(fhrsid_set)} existing FHRSIDs in {table_ref_str}")
+        return fhrsid_set
+    except Exception as e:
+        logging.error(f"Error fetching FHRSIDs from {table_ref_str}: {e}")
+        return set()
+
+def append_new_restaurants_with_dedup(
+    df: pd.DataFrame, 
+    project_id: str, 
+    dataset_id: str, 
+    table_id: str, 
+    bq_schema: List[bigquery.SchemaField],
+    fhrsid_column: str = 'fhrsid'
+) -> Tuple[bool, int]:
+    """
+    Appends only new restaurants (based on FHRSID) to a BigQuery table.
+    
+    Args:
+        df: DataFrame with new restaurant data (assumes columns are already sanitized).
+        project_id: The Google Cloud project ID.
+        dataset_id: The BigQuery dataset ID.
+        table_id: The BigQuery table ID.
+        bq_schema: A list of bigquery.SchemaField objects for the BigQuery table.
+        fhrsid_column: The name of the FHRSID column in the DataFrame (default: 'fhrsid').
+    
+    Returns:
+        Tuple of (success: bool, num_added: int)
+    """
+    if df.empty:
+        logging.info("DataFrame is empty, nothing to append")
+        return True, 0
+    
+    # Get existing FHRSIDs from BigQuery
+    existing_fhrsids = get_existing_fhrsids(project_id, dataset_id, table_id)
+    
+    # Filter DataFrame to only include new FHRSIDs
+    if fhrsid_column in df.columns:
+        # Convert DataFrame FHRSIDs to strings for comparison
+        df[fhrsid_column] = df[fhrsid_column].astype(str)
+        
+        # Filter out rows with FHRSIDs that already exist
+        df_new = df[~df[fhrsid_column].isin(existing_fhrsids)].copy()
+        
+        num_filtered = len(df) - len(df_new)
+        if num_filtered > 0:
+            logging.info(f"Filtered out {num_filtered} records with existing FHRSIDs")
+            st.info(f"Filtered out {num_filtered} records that already exist in BigQuery")
+        
+        if df_new.empty:
+            logging.info("No new records to add after filtering existing FHRSIDs")
+            st.info("All FHRSIDs from the API already exist in BigQuery. No new records to add.")
+            return True, 0
+        
+        # Use the existing append_to_bigquery function
+        success = append_to_bigquery(df_new, project_id, dataset_id, table_id, bq_schema)
+        return success, len(df_new) if success else 0
+    else:
+        logging.warning(f"FHRSID column '{fhrsid_column}' not found in DataFrame. Proceeding with regular append.")
+        success = append_to_bigquery(df, project_id, dataset_id, table_id, bq_schema)
+        return success, len(df) if success else 0
+
+def create_merge_query_for_new_restaurants(
+    source_table: str,
+    target_table: str,
+    fhrsid_column: str = 'fhrsid',
+    columns_to_insert: List[str] = None
+) -> str:
+    """
+    Creates a MERGE query to insert only new restaurants (based on FHRSID) from a source table to target table.
+    
+    Args:
+        source_table: Full path to the source table (project.dataset.table)
+        target_table: Full path to the target table (project.dataset.table)
+        fhrsid_column: Name of the FHRSID column (default: 'fhrsid')
+        columns_to_insert: List of columns to insert. If None, will insert all columns.
+    
+    Returns:
+        A MERGE SQL query string
+    """
+    if columns_to_insert:
+        columns_str = ', '.join([f'`{col}`' for col in columns_to_insert])
+        values_str = ', '.join([f'source.`{col}`' for col in columns_to_insert])
+    else:
+        # If no specific columns, use SELECT *
+        columns_str = '*'
+        values_str = 'source.*'
+    
+    merge_query = f"""
+    MERGE `{target_table}` AS target
+    USING `{source_table}` AS source
+    ON target.`{fhrsid_column}` = source.`{fhrsid_column}`
+    WHEN NOT MATCHED THEN
+        INSERT ({columns_str})
+        VALUES ({values_str})
+    """
+    
+    return merge_query
+
+def batch_insert_new_restaurants_via_merge(
+    df: pd.DataFrame,
+    project_id: str,
+    dataset_id: str,
+    table_id: str,
+    temp_table_suffix: str = '_temp_insert',
+    bq_schema: List[bigquery.SchemaField] = None
+) -> Tuple[bool, int]:
+    """
+    Efficiently inserts only new restaurants using a temporary table and MERGE operation.
+    
+    Args:
+        df: DataFrame with new restaurant data
+        project_id: The Google Cloud project ID
+        dataset_id: The BigQuery dataset ID
+        table_id: The BigQuery table ID
+        temp_table_suffix: Suffix for the temporary table name
+        bq_schema: Schema for the BigQuery table
+    
+    Returns:
+        Tuple of (success: bool, num_added: int)
+    """
+    if df.empty:
+        logging.info("DataFrame is empty, nothing to insert")
+        return True, 0
+    
+    client = bigquery.Client(project=project_id)
+    temp_table_id = f"{table_id}{temp_table_suffix}"
+    temp_table_ref = f"{project_id}.{dataset_id}.{temp_table_id}"
+    target_table_ref = f"{project_id}.{dataset_id}.{table_id}"
+    
+    try:
+        # Step 1: Create temporary table with new data
+        logging.info(f"Creating temporary table {temp_table_ref} with {len(df)} records")
+        
+        job_config = bigquery.LoadJobConfig(
+            schema=bq_schema,
+            write_disposition=bigquery.WriteDisposition.WRITE_TRUNCATE,
+            column_name_character_map="V2",
+        )
+        
+        load_job = client.load_table_from_dataframe(df, temp_table_ref, job_config=job_config)
+        load_job.result()  # Wait for the job to complete
+        
+        # Step 2: Get count before merge
+        count_query = f"SELECT COUNT(*) as count FROM `{target_table_ref}`"
+        count_before = list(client.query(count_query).result())[0].count
+        
+        # Step 3: Execute MERGE query
+        columns_to_insert = [field.name for field in bq_schema] if bq_schema else None
+        merge_query = create_merge_query_for_new_restaurants(
+            source_table=temp_table_ref,
+            target_table=target_table_ref,
+            fhrsid_column='fhrsid',
+            columns_to_insert=columns_to_insert
+        )
+        
+        logging.info(f"Executing MERGE query to insert new records")
+        merge_success = execute_merge_query(merge_query, project_id)
+        
+        if not merge_success:
+            raise Exception("MERGE query failed")
+        
+        # Step 4: Get count after merge to determine how many were added
+        count_after = list(client.query(count_query).result())[0].count
+        num_added = count_after - count_before
+        
+        logging.info(f"Successfully added {num_added} new records via MERGE")
+        
+        # Step 5: Clean up temporary table
+        client.delete_table(temp_table_ref, not_found_ok=True)
+        logging.info(f"Deleted temporary table {temp_table_ref}")
+        
+        return True, num_added
+        
+    except Exception as e:
+        logging.error(f"Error in batch_insert_new_restaurants_via_merge: {e}")
+        # Try to clean up temp table even on error
+        try:
+            client.delete_table(temp_table_ref, not_found_ok=True)
+        except:
+            pass
+        return False, 0
 
 def execute_merge_query(merge_query: str, project_id: str) -> bool:
     """

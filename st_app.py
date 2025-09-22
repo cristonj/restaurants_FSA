@@ -17,6 +17,7 @@ from bq_utils import (
     write_to_bigquery,
     load_all_data_from_bq, # Added import
     append_to_bigquery, # Added for new flow
+    append_new_restaurants_with_dedup, # Added for deduplication
     execute_merge_query, # Added for MERGE operation
     BigQueryExecutionError,  # Added import
     DataFrameConversionError # Added import
@@ -324,16 +325,21 @@ def _append_new_data_to_bigquery(new_restaurants: List[Dict[str, Any]], project_
         st.warning("After processing, the DataFrame for new restaurants is empty. Skipping BigQuery append.")
         return
 
-    success = append_to_bigquery(
+    # Use the new deduplication function instead of regular append
+    success, num_added = append_new_restaurants_with_dedup(
         df=df_for_bq,
         project_id=project_id,
         dataset_id=dataset_id,
         table_id=table_id,
-        bq_schema=final_bq_schema
+        bq_schema=final_bq_schema,
+        fhrsid_column=sanitize_column_name('FHRSID')  # Use sanitized column name
     )
 
     if success:
-        st.success(f"Successfully appended {len(df_for_bq)} new records to BigQuery table {project_id}.{dataset_id}.{table_id}.")
+        if num_added > 0:
+            st.success(f"Successfully appended {num_added} new records to BigQuery table {project_id}.{dataset_id}.{table_id}.")
+        else:
+            st.info(f"No new records were added to BigQuery table {project_id}.{dataset_id}.{table_id} (all FHRSIDs already exist).")
     else:
         st.error(f"Failed to append new records to BigQuery table {project_id}.{dataset_id}.{table_id}.")
 
